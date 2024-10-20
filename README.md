@@ -83,6 +83,33 @@ Each data item in the dataset is a dict with the following keys: "Question", "Co
    - Add API keys for the other models you need to evaluate, like **Claude** and **Gemini** API in `utils.py`.
 2. **Evaluations of the predefined models**
    We predefine some models in the evaluation, you can directly evaluate these models on the datasets without any modification.
-   The predefined models for text-only questions are: ['llama3-instruct', 'vicuna', 'mistral', 'vicuna-13b', 'llama-3-70b', 'mistral-8x7b', 'galactica', 'claude3-haiku', 'claude3.5-sonnet', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gpt-4o-mini', 'gpt-4o-2024-08-06']
+   
+   The predefined models for text-only questions are: ['llama3-instruct-8b', 'vicuna-7b', 'mistral-7b', 'vicuna-13b', 'llama-3-70b', 'mistral-8x7b', 'galactica-6.7b', 'claude3-haiku', 'claude3.5-sonnet', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gpt-4o-mini', 'gpt-4o-2024-08-06']
+   
    The predefined models for multimodal questions are: ['instructBlip-7B', 'Qwen-VL-Chat', 'InternVL2', 'llama3_2', 'claude3-haiku', 'claude3.5-sonnet', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gpt-4o-mini', 'gpt-4o-2024-08-06']
-4. 
+
+   By providing one model name specified above, you can evaluate the model on the LabSafety Bench. You can set the number of shots and decide whether to use CoT or the sampled dataset. For "text.py", you can also set whether to use hints in the evaluation. Here is an example.
+   ```sh
+cd src
+
+python test.py \
+--model_name gpt-4o-mini \
+--CoT
+--use_hint
+--n_shots 0
+--sampled
+```
+
+```sh
+python testV.py \
+--model_name gpt-4o-mini \
+--CoT
+--n_shots 0
+--sampled
+```
+After that, you can run "category_acc.py" or "level_acc.py" to get the accuracy of specified models in different categories or levels.
+
+3. **Evaluation of other models**
+   For other models, you need to specify how to load the model and tokenizer and how to make inferences in "utils.py" and then change "test.py" or "testV.py" accordingly.
+
+
