@@ -23,12 +23,9 @@ We propose LabSafety Bench, a specialized evaluation framework designed to asses
 <img src="/assets/Taxonomy.png" width="100%">
   
 ###  **Our proposed new taxonomy for lab safety.**
-  
-<img src="/assets/Figure3.png" width="100%">
-  
-### **Some examples of LabSafety Bench.**
+  </div>
 
-</div>
+
 
 
 
@@ -77,11 +74,20 @@ Each data item in the dataset is a dict with the following keys: "Question", "Co
 }
 ```
 
+  <div align="center">
+<img src="/assets/Figure3.png" width="100%">
+  
+### **Some examples of LabSafety Bench.**
+
+</div>
+
 ## 📝 Evaluations
 1. **API Key Setup**
    - Since we use GPT-4o-mini as the answer extractor, you need to first set **OpenAI API** in "utils.py"
    - Add API keys for the other models you need to evaluate, like **Claude** and **Gemini** API in `utils.py`.
+   - 
 2. **Evaluations of the predefined models**
+
    We predefine some models in the evaluation, you can directly evaluate these models on the datasets without any modification.
    
    The predefined models for text-only questions are: ['llama3-instruct-8b', 'vicuna-7b', 'mistral-7b', 'vicuna-13b', 'llama-3-70b', 'mistral-8x7b', 'galactica-6.7b', 'claude3-haiku', 'claude3.5-sonnet', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gpt-4o-mini', 'gpt-4o-2024-08-06']
@@ -111,6 +117,7 @@ python testV.py \
 After that, you can run "category_acc.py" or "level_acc.py" to get the accuracy of specified models in different categories or levels.
 
 3. **Evaluation of other models**
+   
    For other models, you need to specify how to load the model and tokenizer and how to make inferences in "utils.py" and then change "test.py" or "testV.py" accordingly.
 
 
