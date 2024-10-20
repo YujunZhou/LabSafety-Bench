@@ -89,7 +89,8 @@ Each data item in the dataset is a dict with the following keys: "Question", "Co
    The predefined models for multimodal questions are: ['instructBlip-7B', 'Qwen-VL-Chat', 'InternVL2', 'llama3_2', 'claude3-haiku', 'claude3.5-sonnet', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gpt-4o-mini', 'gpt-4o-2024-08-06']
 
    By providing one model name specified above, you can evaluate the model on the LabSafety Bench. You can set the number of shots and decide whether to use CoT or the sampled dataset. For "text.py", you can also set whether to use hints in the evaluation. Here is an example.
-   ```sh
+   
+ ```sh
 cd src
 
 python test.py \
