@@ -13,12 +13,13 @@ import torchvision.transforms as T
 from torchvision.transforms.functional import InterpolationMode
 import anthropic
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
+import io
 
-os.environ["REPLICATE_API_TOKEN"] = ""
+
+os.environ["REPLICATE_API_TOKEN"] = ''
 os.environ['OPENAI_API_KEY'] = ''
 os.environ['GOOGLE_API_KEY'] = ''
 os.environ['ANTHROPIC_API_KEY'] = ''
-
 
 class OpenAIModel:
     def __init__(self, model_name, max_tokens=None, system_prompt='You are a helpful assistant.', temperature=0.0, top_p=0.9, **kwargs):
@@ -214,7 +215,7 @@ def llm_generate_QA_answer(inputs, conv_template, model, tokenizer, batch_size=6
 
     return analyses
 
-def analyze_image_with_prompt_llava_8B(model, processor, image_paths, prompt_texts, sys_prompt):
+def analyze_image_with_prompt_llava_8B(model, processor, decoded_images, prompt_texts, sys_prompt):
     prompts = [(f"<|start_header_id|>system<|end_header_id|>\n\n{sys_prompt}<|eot_id|>"
                 f"<|start_header_id|>user<|end_header_id|>\n\n<image>\n{prompt_texts[i]}<|eot_id|>"
                 "<|start_header_id|>assistant<|end_header_id|>\n\n") for i in range(len(prompt_texts))]
@@ -225,9 +226,8 @@ def analyze_image_with_prompt_llava_8B(model, processor, image_paths, prompt_tex
     batch_size = 16
     for idx in range(0, len(prompt_texts), batch_size):
         images = []
-        for image_path in image_paths[idx:idx + batch_size]:
-            image = Image.open(image_path)
-            images.append(image)
+        for decoded_image in decoded_images[idx:idx + batch_size]:
+            images.append(decoded_image)
         inputs = processor([prompts[i] for i in range(idx, min(idx + batch_size, len(prompt_texts)))],
                            images=images, return_tensors="pt", padding=True).to("cuda")
         outputs = model.generate(**inputs, max_new_tokens=512, do_sample=False)
@@ -241,15 +241,14 @@ def analyze_image_with_prompt_llava_8B(model, processor, image_paths, prompt_tex
     return generated_text_all
 
 
-def analyze_image_with_prompt_instructBlip(model, processor, image_paths, prompt_texts, sys_prompt):
+def analyze_image_with_prompt_instructBlip(model, processor, decoded_images, prompt_texts, sys_prompt):
     generated_texts_all = []
     batch_size = 1
     for idx in range(0, len(prompt_texts), batch_size):
-        if image_paths is not None:
+        if decoded_images is not None:
             images = []
-            for image_path in image_paths[idx:idx + batch_size]:
-                image = Image.open(image_path)
-                images.append(image)
+            for decoded_image in decoded_images[idx:idx + batch_size]:
+                images.append(decoded_image)
             prompts = prompt_texts
             inputs = processor(images=images, text=[sys_prompt + prompts[i] for i in range(idx, min(idx + batch_size, len(prompt_texts)))], return_tensors="pt", padding=True).to("cuda")
         else:
@@ -272,12 +271,16 @@ def analyze_image_with_prompt_instructBlip(model, processor, image_paths, prompt
     return generated_texts_all
 
 
-def analyze_image_with_prompt_Qwen(model, tokenizer, image_paths, prompt_texts, sys_prompt):
+def analyze_image_with_prompt_Qwen(model, tokenizer, decoded_images, prompt_texts, sys_prompt):
     responses = []
     for i in range(len(prompt_texts)):
-        if image_paths is not None:
+        if decoded_images is not None:
+            buffered = io.BytesIO()
+            decoded_images[i].save(buffered, format=decoded_images[i].format)
+            img_bytes = buffered.getvalue()
+            img_base64 = base64.b64encode(img_bytes).decode('utf-8')
             query = tokenizer.from_list_format([
-                {'image': image_paths[i]},
+                {'image': img_base64},
                 {'text': sys_prompt + prompt_texts[i]},
             ])
         else:
@@ -289,13 +292,13 @@ def analyze_image_with_prompt_Qwen(model, tokenizer, image_paths, prompt_texts, 
     return responses
 
 
-def analyze_image_with_prompt_InternVL(model, tokenizer, image_paths, prompt_texts, sys_prompt):
+def analyze_image_with_prompt_InternVL(model, tokenizer, decoded_images, prompt_texts, sys_prompt):
     responses = []
     batch_size = 16
     generation_config = dict(max_new_tokens=1024, do_sample=False)
     images = []
-    for image_path in image_paths:
-        image = load_image(image_path).to(torch.bfloat16).cuda()
+    for decoded_image in decoded_images:
+        image = load_image(decoded_image).to(torch.bfloat16).cuda()
         images.append(image)
     for i in range(len(prompt_texts)):
         question = f'<image>\n{sys_prompt + prompt_texts[i]}'
@@ -375,8 +378,8 @@ def dynamic_preprocess(image, min_num=1, max_num=12, image_size=448, use_thumbna
         processed_images.append(thumbnail_img)
     return processed_images
 
-def load_image(image_file, input_size=448, max_num=12):
-    image = Image.open(image_file).convert('RGB')
+def load_image(decoded_image, input_size=448, max_num=12):
+    image = decoded_image.convert('RGB')
     transform = build_transform(input_size=input_size)
     images = dynamic_preprocess(image, image_size=input_size, use_thumbnail=True, max_num=max_num)
     pixel_values = [transform(image) for image in images]
@@ -384,9 +387,12 @@ def load_image(image_file, input_size=448, max_num=12):
     return pixel_values
 
 
-def analyze_image_with_prompt_gpt(image_path, prompt_text, model_name, sys_prompt):
+def analyze_image_with_prompt_gpt(decoded_image, prompt_text, model_name, sys_prompt):
     # Encode the image to base64
-    base64_image = encode_image(image_path)
+    buffered = io.BytesIO()
+    decoded_image.save(buffered, format=decoded_image.format)
+    img_bytes = buffered.getvalue()
+    base64_image = base64.b64encode(img_bytes).decode('utf-8')
     client = OpenAI()
 
     messages = [
@@ -421,9 +427,8 @@ def analyze_image_with_prompt_gpt(image_path, prompt_text, model_name, sys_promp
     return gpt_responses
 
 
-def analyze_image_with_prompt_gemini(image_path, prompt_text, model_name, sys_prompt):
+def analyze_image_with_prompt_gemini(img, prompt_text, model_name, sys_prompt):
     # Encode the image to base64
-    img = Image.open(image_path)
     model = genai.GenerativeModel(model_name)
 
     response = model.generate_content([
@@ -437,10 +442,13 @@ def analyze_image_with_prompt_gemini(image_path, prompt_text, model_name, sys_pr
     response.resolve()
     return response.text
 
-def analyze_image_with_prompt_claude(image_path, prompt_text, model_name, sys_prompt):
+def analyze_image_with_prompt_claude(decoded_image, prompt_text, model_name, sys_prompt):
     # Encode the image to base64
-    base64_image = encode_image(image_path)
-    if 'jpg' in image_path:
+    buffered = io.BytesIO()
+    decoded_image.save(buffered, format=decoded_image.format)
+    img_bytes = buffered.getvalue()
+    base64_image = base64.b64encode(img_bytes).decode('utf-8')
+    if 'JPEG' in decoded_image.format:
         image_media_type = 'image/jpeg'
     else:
         image_media_type = 'image/png'
@@ -473,8 +481,7 @@ def analyze_image_with_prompt_claude(image_path, prompt_text, model_name, sys_pr
 
     return analysis
 
-def analyze_image_with_prompt_llama_3_2(model, processor, image_paths, prompt_texts, sys_prompt):
-    images = [Image.open(image_paths[i]) for i in range(len(image_paths))]
+def analyze_image_with_prompt_llama_3_2(model, processor, images, prompt_texts, sys_prompt):
     analyses = []
     for i in range(len(prompt_texts)):
         messages = [
