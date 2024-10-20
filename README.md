@@ -95,17 +95,17 @@ cd src
 
 python test.py \
 --model_name gpt-4o-mini \
---CoT
---use_hint
---n_shots 0
+--CoT \
+--use_hint \
+--n_shots 0 \
 --sampled
 ```
 
 ```sh
 python testV.py \
 --model_name gpt-4o-mini \
---CoT
---n_shots 0
+--CoT \
+--n_shots 0 \
 --sampled
 ```
 After that, you can run "category_acc.py" or "level_acc.py" to get the accuracy of specified models in different categories or levels.
