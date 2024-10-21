@@ -120,4 +120,16 @@ After that, you can run "category_acc.py" or "level_acc.py" to get the accuracy 
    
    For other models, you need to specify how to load the model and tokenizer and how to make inferences in "utils.py" and then change "test.py" or "testV.py" accordingly.
 
+## ✅ Citation
 
+```latex
+@misc{zhou2024labsafetybenchbenchmarkingllms,
+      title={LabSafety Bench: Benchmarking LLMs on Safety Issues in Scientific Labs}, 
+      author={Yujun Zhou and Jingdong Yang and Kehan Guo and Pin-Yu Chen and Tian Gao and Werner Geyer and Nuno Moniz and Nitesh V Chawla and Xiangliang Zhang},
+      year={2024},
+      eprint={2410.14182},
+      archivePrefix={arXiv},
+      primaryClass={cs.CL},
+      url={https://arxiv.org/abs/2410.14182}, 
+}
+```
