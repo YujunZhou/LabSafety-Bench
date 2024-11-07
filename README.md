@@ -85,7 +85,7 @@ Each data item in the dataset is a dict with the following keys: "Question", "Co
 1. **API Key Setup**
    - Since we use GPT-4o-mini as the answer extractor, you need to first set **OpenAI API** in "utils.py"
    - Add API keys for the other models you need to evaluate, like **Claude** and **Gemini** API in `utils.py`.
-   - 
+    
 2. **Evaluations of the predefined models**
 
    We predefine some models in the evaluation, you can directly evaluate these models on the datasets without any modification.
