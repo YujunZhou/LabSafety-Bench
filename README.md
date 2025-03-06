@@ -2,101 +2,88 @@
 
 <img src="/assets/logo.png" width="100%">
 
-
 [![Website](https://img.shields.io/badge/Website-%F0%9F%8C%8D-blue?style=for-the-badge&logoWidth=40)](https://yujunzhou.github.io/LabSafetyBench.github.io/)
 [![Paper](https://img.shields.io/badge/Paper-%F0%9F%8E%93-lightgrey?style=for-the-badge&logoWidth=40)](https://arxiv.org/abs/2410.14182)
 [![Dataset](https://img.shields.io/badge/Dataset-%F0%9F%92%BE-green?style=for-the-badge&logoWidth=40)](https://huggingface.co/datasets/yujunzhou/LabSafety_Bench)
 
-
 </div>
 
-The official repository of "LabSafety Bench: Benchmarking LLMs on Safety Issues in Scientific Labs" 
+The official repository of **"LabSafety Bench: Benchmarking LLMs on Safety Issues in Scientific Labs"**
 
-## 💡Overview
+## 💡 Overview
 
+Artificial Intelligence (AI) is revolutionizing scientific research, but its growing integration into laboratory environments brings critical safety challenges. As large language models (LLMs) and vision language models (VLMs) are increasingly used for procedural guidance and even autonomous experiment orchestration, there is a risk of an "illusion of understanding" where users may overestimate the reliability of these systems in safety-critical situations.
 
+LabSafety Bench is a comprehensive evaluation framework designed to rigorously assess the trustworthiness of these models in laboratory settings. The benchmark includes two main evaluation components:
 
+- **Multiple-Choice Questions (MCQs)**: A set of 765 questions derived from authoritative lab safety protocols, with 632 text-only questions and 133 multimodal questions.
+- **Real-World Scenario Evaluations**: A collection of 520 realistic laboratory scenarios that yield a total of 4090 open-ended questions, organized into:
+  - **Hazards Identification Test**: Where models identify all potential hazards in a given scenario.
+  - **Consequence Identification Test**: Where models predict the outcomes of executing specific hazardous actions.
 
-We propose LabSafety Bench, a specialized evaluation framework designed to assess the reliability and safety awareness of LLMs in laboratory environments. First, we propose a new taxonomy for lab safety, aligned with US Occupational Safety and Health Administration (OSHA) protocols. Second, we curate a set of 765 multiple-choice questions guided by this taxonomy to ensure comprehensive coverage of safety concerns across various domains. Of these, 632 are text-only questions, while 133 are text-with-image questions.
+Developed via expert-AI collaboration using sources such as OSHA, WHO, and established textbooks, LabSafety Bench ensures that every evaluation item is verified for clarity, accuracy, and practical relevance.
 
-<div align="center">
-<img src="/assets/Taxonomy.png" width="100%">
-  
-###  **Our proposed new taxonomy for lab safety.**
-  </div>
+For more details, please visit our [project website](https://yujunzhou.github.io/LabSafetyBench.github.io/).
 
+## 🔧 Installation
 
+Install the required Python packages by running:
+```bash
+pip install -r requirements.txt
+```
 
-
-
-For more details about TrustLLM, please refer to [project website](https://yujunzhou.github.io/LabSafetyBench.github.io/).
-
-
-## 🔧 Instrallation
-
- **Install Required Packages**  
-   Install the necessary Python packages by running:
-   ```bash
-   pip install -r requirements.txt
-   ```
 ## 📖 Dataset Usage
+
 ### Data Downloading
 
-The data examples are divided into four splits: 'QA', 'QA_I', 'sampledQA', 'sampledQA_I'
-
+The dataset is divided into five splits:
 - **QA**: 632 text-only examples for standard evaluation.
 - **QA_I**: 133 multimodal questions for standard evaluation.
-- **sampledQA**: 80 text-only examples used for human evaluation, validation, or for those with limited computing resources.
-- **sampledQA_I**: 20 multimodal examples used for human evaluation, validation, or for those with limited computing resources.
+- **sampledQA**: 80 text-only examples suitable for human evaluation, validation, or low-resource scenarios.
+- **sampledQA_I**: 20 multimodal examples for similar use cases.
+- **scenario_based_questions**: 520 real-world scenarios combined with 4090 questions.
 
-You can download this dataset by the following command (make sure that you have installed [Huggingface Datasets](https://huggingface.co/docs/datasets/quickstart)):
-
+After installing [Huggingface Datasets](https://huggingface.co/docs/datasets/quickstart), download the dataset by running:
 ```python
 from datasets import load_dataset
-# Load all the splits
+# Load all splits
 dataset = load_dataset("yujunzhou/LabSafety_Bench")
-# Load one of the splits, split can choose one of the following: 'QA', 'QA_I', 'sampledQA', 'sampledQA_I'
+# Load a specific split, for example 'QA'
 QA_dataset = load_dataset('yujunzhou/LabSafety_Bench', split='QA')
 ```
 
 ### Data Format
-Each data item in the dataset is a dict with the following keys: "Question", "Correct Answer", "Explanation", "Category", "Topic", "Level", "Image Path" and "Decoded Image", as shown below:
-```
-{
-    "Question": [str] A multiple-choice question with four options,
-    "Explanation": [str] An explanation of the question why the correct answer is correct and why the wrong answers are wrong,
-    "Correct Answer": [char] One option from 'A', 'B', 'C' or 'D',
-    "Category": [list] The category that the question covers about lab safety,
-    "Topic": [str] A brief word or phrase about the main hazardous substance or equipment involved in the question,
-    "Level": [str] "Easy" or "Hard" indicating whether this question can be answered within high school knowledge,
-    "Image Path": [str] Image path for the multimodal questions. For text-only questions, it is None,
-    "Decoded Image": [Image] The shown image for multimodal questions
-}
-```
 
-  <div align="center">
+Each sample in the dataset is a dictionary containing the following keys:
+- **Question**: A multiple-choice question with four options.
+- **Explanation**: A detailed explanation outlining why the correct answer is right and the others are not.
+- **Correct Answer**: The correct option (one of 'A', 'B', 'C', or 'D').
+- **Category**: The lab safety category covered by the question.
+- **Topic**: A brief descriptor identifying the main hazard or equipment involved.
+- **Level**: “Easy” or “Hard” (indicating whether the question can be answered with high school-level knowledge).
+- **Image Path**: The image file path for multimodal questions (None for text-only).
+- **Decoded Image**: The actual image for multimodal questions.
+
+<div align="center">
 <img src="/assets/Figure3.png" width="100%">
   
-### **Some examples of LabSafety Bench.**
-
+### **Example Question Display**
 </div>
 
 ## 📝 Evaluations
-1. **API Key Setup**
-   - Since we use GPT-4o-mini as the answer extractor, you need to first set **OpenAI API** in "utils.py"
-   - Add API keys for the other models you need to evaluate, like **Claude** and **Gemini** API in `utils.py`.
-    
-2. **Evaluations of the predefined models**
 
-   We predefine some models in the evaluation, you can directly evaluate these models on the datasets without any modification.
-   
-   The predefined models for text-only questions are: ['llama3-instruct-8b', 'vicuna-7b', 'mistral-7b', 'vicuna-13b', 'llama-3-70b', 'mistral-8x7b', 'galactica-6.7b', 'claude3-haiku', 'claude3.5-sonnet', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gpt-4o-mini', 'gpt-4o-2024-08-06']
-   
-   The predefined models for multimodal questions are: ['instructBlip-7B', 'Qwen-VL-Chat', 'InternVL2', 'llama3_2', 'claude3-haiku', 'claude3.5-sonnet', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gpt-4o-mini', 'gpt-4o-2024-08-06']
+### 1. API Key Setup
 
-   By providing one model name specified above, you can evaluate the model on the LabSafety Bench. You can set the number of shots and decide whether to use CoT or the sampled dataset. For "text.py", you can also set whether to use hints in the evaluation. Here is an example.
-   
- ```sh
+Ensure that you have configured your OpenAI API key and any other required keys (e.g., for Claude or Gemini) in the `utils.py` file.
+
+### 2. Evaluations of Multiple-Choice Questions
+
+LabSafety Bench supports evaluations for both text-only and multimodal tasks. Predefined models for text-only evaluations include, but are not limited to:
+- **LLMs**: 'llama3-instruct-8b', 'vicuna-7b', 'mistral-7b', etc.
+- **VLMs (for multimodal tasks)**: 'instructBlip-7B', 'Qwen-VL-Chat', 'InternVL2', etc.
+
+Example commands for evaluation:
+```sh
 cd src
 
 python test.py \
@@ -106,7 +93,7 @@ python test.py \
 --n_shots 0 \
 --sampled
 ```
-
+For multimodal evaluation:
 ```sh
 python testV.py \
 --model_name gpt-4o-mini \
@@ -114,22 +101,32 @@ python testV.py \
 --n_shots 0 \
 --sampled
 ```
-After that, you can run "category_acc.py" or "level_acc.py" to get the accuracy of specified models in different categories or levels.
+Additional scripts such as `category_acc.py` and `level_acc.py` provide detailed breakdowns by safety category and difficulty level.
 
-3. **Evaluation of other models**
-   
-   For other models, you need to specify how to load the model and tokenizer and how to make inferences in "utils.py" and then change "test.py" or "testV.py" accordingly.
+### 3. Evaluation of Real-World Scenario Tasks
+
+The benchmark includes two additional real-world evaluation tasks:
+- **Hazards Identification Test**: Assess the model's ability to comprehensively list potential hazards in realistic lab scenarios.
+- **Consequence Identification Test**: Evaluate the model's capability to predict the outcomes of specific hazardous actions in a given scenario.
+
+These tasks simulate dynamic and practical lab environments, addressing the critical need to ensure that AI systems are reliable when making safety-critical decisions.
+
+### 4. Evaluation of Additional Models
+
+To evaluate models not included in the predefined list, please modify the model loading and inference procedures in `utils.py` and adjust the corresponding evaluation scripts accordingly.
 
 ## ✅ Citation
 
+If you use LabSafety Bench in your research, please cite our work:
 ```latex
 @misc{zhou2024labsafetybenchbenchmarkingllms,
-      title={LabSafety Bench: Benchmarking LLMs on Safety Issues in Scientific Labs}, 
-      author={Yujun Zhou and Jingdong Yang and Kehan Guo and Pin-Yu Chen and Tian Gao and Werner Geyer and Nuno Moniz and Nitesh V Chawla and Xiangliang Zhang},
+      title={LabSafety Bench: Benchmarking LLMs on Safety Issues in Scientific Labs},
+      author={Yujun Zhou and Jingdong Yang and Yue Huang and Kehan Guo and Zoe Emory and Bikram Ghosh and Amita Bedar and Sujay Shekar and Pin-Yu Chen and Tian Gao and Werner Geyer and Nuno Moniz and Nitesh V. Chawla and Xiangliang Zhang},
       year={2024},
-      eprint={2410.14182},
+      eprint={NEW_EPRINT_ID},
       archivePrefix={arXiv},
       primaryClass={cs.CL},
-      url={https://arxiv.org/abs/2410.14182}, 
+      url={https://arxiv.org/abs/NEW_ID}, 
 }
 ```
+
