@@ -81,6 +81,13 @@ Each sample in the MCQ configuration is a dictionary containing the following ke
 - **Decoded Image**: *Image*  
   The actual image for multimodal questions.
 
+<div align="center">
+<img src="/assets/Figure3.png" width="100%">
+  
+### Example Question Display
+</div>
+
+
 #### Scenario Configuration ("scenario")
 Each sample in the scenario configuration is a dictionary containing the following keys:
 - **Scenario**: *string*  
@@ -97,12 +104,6 @@ Each sample in the scenario configuration is a dictionary containing the followi
   Each dictionary contains:
   - **Decision**: *string*
   - **Consequence**: *string*
-
-<div align="center">
-<img src="/assets/Figure3.png" width="100%">
-  
-### Example Question Display
-</div>
 
 ## 📝 Evaluations
 
