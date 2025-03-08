@@ -62,7 +62,7 @@ scenario_dataset = load_dataset("yujunzhou/LabSafety_Bench", name="scenario", sp
 
 ### Data Format
 
-#### MCQ Configuration ("MCQ" or "default")
+#### MCQ Configuration ("MCQ")
 Each sample in the MCQ configuration is a dictionary containing the following keys:
 - **Question**: *string*  
   A multiple-choice question with four options.
