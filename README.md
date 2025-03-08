@@ -46,13 +46,19 @@ The dataset is divided into five splits:
 After installing [Huggingface Datasets](https://huggingface.co/docs/datasets/quickstart), download the dataset by running:
 ```python
 from datasets import load_dataset
-# Load all splits
-dataset = load_dataset("yujunzhou/LabSafety_Bench")
-# Load a specific split, for example 'QA'
-QA_dataset = load_dataset('yujunzhou/LabSafety_Bench', split='QA')
+
+# Load all MCQ splits (MCQ configuration)
+MCQ_dataset = load_dataset("yujunzhou/LabSafety_Bench", name="MCQ")
+
+# Or load a specific split
+QA_split = load_dataset("yujunzhou/LabSafety_Bench", name="MCQ", split="QA")
+
+# Load scenario configuration
+scenario_dataset = load_dataset("yujunzhou/LabSafety_Bench", name="scenario", split="scenario")
+
 ```
 
-### Data Format
+### MCQ Data Format
 
 Each sample in the dataset is a dictionary containing the following keys:
 - **Question**: A multiple-choice question with four options.
