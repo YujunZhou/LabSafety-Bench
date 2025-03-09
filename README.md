@@ -29,7 +29,7 @@ Developed via expert-AI collaboration using sources such as OSHA, WHO, and estab
 For more details, please visit our [project website](https://yujunzhou.github.io/LabSafetyBench.github.io/).
 
 <div align="center">
-<img src="/assets/Figure1_new.png" width="60%">
+<img src="/assets/Figure1_new.png" width="70%">
   
 ### LabSafety Bench Overview
 </div>
