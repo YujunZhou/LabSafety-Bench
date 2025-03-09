@@ -28,6 +28,13 @@ Developed via expert-AI collaboration using sources such as OSHA, WHO, and estab
 
 For more details, please visit our [project website](https://yujunzhou.github.io/LabSafetyBench.github.io/).
 
+<div align="center">
+<img src="/assets/Figure1_new.png" width="60%">
+  
+### LabSafety Bench Overview
+</div>
+
+
 ## 🔧 Installation
 
 Install the required Python packages by running:
