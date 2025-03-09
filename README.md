@@ -135,7 +135,7 @@ python text_with_image_QA.py \
 --n_shots 0 \
 ```
 
-Additional scripts such as `category_acc.py` and `level_acc.py` provide detailed breakdowns by safety category and difficulty level.
+Additional scripts such as `src/analysis/category_acc.py` and `src/analysis/level_acc.py` provide detailed breakdowns by safety category and difficulty level.
 
 ### 3. Evaluation of Real-World Scenario Tasks
 
