@@ -2,10 +2,20 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, OPTForCausalLM
 
 def load_model_and_tokenizer(model_path, tokenizer_path=None, device='cuda:0', **kwargs):
-    if 'galactica' not in model_path and 'darwin' not in model_path:
+    # Check GPU availability
+    if 'cuda' in device and not torch.cuda.is_available():
+        print("Warning: GPU requested but CUDA not available, falling back to CPU")
+        device = 'cpu'
+    else:
+        print(f"Using device: {device}")
+        if 'cuda' in device:
+            print(f"GPU info: {torch.cuda.get_device_name(0)}")
+            print(f"Available GPU memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB")
+    
+    if 'galactica' not in model_path:
         model = AutoModelForCausalLM.from_pretrained(
             model_path,
-            torch_dtype=torch.float16,
+            torch_dtype=torch.float16 if 'cuda' in device else torch.float32,
             trust_remote_code=True,
             **kwargs
         ).to(device).eval()
@@ -14,8 +24,7 @@ def load_model_and_tokenizer(model_path, tokenizer_path=None, device='cuda:0', *
             model_path,
             trust_remote_code=True,
             use_fast=False,
-            padding_side='left',
-            cache_dir='../TRANS_cache/'
+            padding_side='left'
         )
         
         if tokenizer.pad_token is None:
@@ -52,7 +61,7 @@ def adaptive_generate_batch(input_ids_tensor_batch, attn_mask_batch, model, toke
     except torch.cuda.OutOfMemoryError:
         torch.cuda.empty_cache()
         if current_bs == 1:
-            raise RuntimeError("单个样本生成时内存不足")
+            raise RuntimeError("Out of memory for single sample generation")
         new_bs = max(1, current_bs // 2)
         outputs_list = []
         total = input_ids_tensor_batch.size(0)
@@ -66,13 +75,13 @@ def _llm_generate_core(inputs, conv_template, model, tokenizer, batch_size, max_
     import torch
     input_ids_list = []
     
-    # 增加输入长度验证
+    # Add input length validation
     max_model_length = model.config.max_position_embeddings
     for i in range(len(inputs)):
         conv_template.append_message(conv_template.roles[0], inputs[i])
         conv_template.append_message(conv_template.roles[1], None)
         prompt = conv_template.get_prompt()
-        # 添加截断处理
+        # Add truncation handling
         encoding = tokenizer(prompt, truncation=True, max_length=max_model_length - max_new_tokens)
         toks = encoding.input_ids
         input_ids = torch.tensor(toks).to(model.device)
@@ -80,10 +89,10 @@ def _llm_generate_core(inputs, conv_template, model, tokenizer, batch_size, max_
         conv_template.messages = []
 
     pad_tok = tokenizer.pad_token_id
-    if pad_tok is None:  # 确保pad_token存在
+    if pad_tok is None:  # Ensure pad_token exists
         pad_tok = tokenizer.eos_token_id
     
-    # 修改为左填充（更适合大多数LLM）
+    # Change to left padding (more suitable for most LLMs)
     max_input_length = max(ids.size(0) for ids in input_ids_list)
     padded_input_ids_list = [
         torch.cat([
@@ -95,7 +104,7 @@ def _llm_generate_core(inputs, conv_template, model, tokenizer, batch_size, max_
     input_ids_tensor = torch.stack(padded_input_ids_list, dim=0)
     attn_mask = (input_ids_tensor != pad_tok).type(input_ids_tensor.dtype)
     
-    # 添加CUDA内存清理
+    # Add CUDA memory cleanup
     torch.cuda.empty_cache()
     
     output_ids_new = []
@@ -103,20 +112,17 @@ def _llm_generate_core(inputs, conv_template, model, tokenizer, batch_size, max_
         input_ids_tensor_batch = input_ids_tensor[i:i + batch_size]
         attn_mask_batch = attn_mask[i:i + batch_size]
         
-        # 添加安全检查
+        # Add safety check
         if input_ids_tensor_batch.size(1) > max_model_length:
-            raise ValueError(f"输入长度{input_ids_tensor_batch.size(1)}超过模型最大长度{max_model_length}")
+            raise ValueError(f"Input length {input_ids_tensor_batch.size(1)} exceeds model max length {max_model_length}")
             
         output_ids_batch = adaptive_generate_batch(input_ids_tensor_batch, attn_mask_batch, 
                                                  model, tokenizer, batch_size, max_new_tokens, random_sample)
         for output_ids in output_ids_batch:
-            output_ids_new.append(output_ids[input_ids_tensor_batch.size(1):])  # 修正切片方式
+            output_ids_new.append(output_ids[input_ids_tensor_batch.size(1):])  # Fix slicing method
             
     decoded = [tokenizer.decode(o, skip_special_tokens=True) for o in output_ids_new]
     return decoded
-
-def llm_generate(inputs, conv_template, model, tokenizer, batch_size=6, random_sample=False, max_new_tokens=64):
-    return _llm_generate_core(inputs, conv_template, model, tokenizer, batch_size, max_new_tokens, random_sample)
 
 def llm_generate_QA_answer(inputs, conv_template, model, tokenizer, batch_size=6, random_sample=False, max_new_tokens=512):
     return _llm_generate_core(inputs, conv_template, model, tokenizer, batch_size, max_new_tokens, random_sample) 

@@ -20,7 +20,7 @@ Artificial Intelligence (AI) is revolutionizing scientific research, but its gro
   A set of 765 questions derived from authoritative lab safety protocols, comprising 632 text-only questions and 133 multimodal questions.
   
 - **Real-World Scenario Evaluations:**  
-  A collection of 520 realistic laboratory scenarios that yield a total of 4090 open-ended questions, organized into:
+  A collection of 404 realistic laboratory scenarios that yield a total of 3128 open-ended questions, organized into:
   - **Hazards Identification Test:** Models identify all potential hazards in a given scenario.
   - **Consequence Identification Test:** Models predict the outcomes of executing specific hazardous actions.
 
@@ -42,6 +42,12 @@ Install the required Python packages by running:
 pip install -r requirements.txt
 ```
 
+### Additional Setup
+
+For SFT (Supervised Fine-Tuning), please follow [@LLaMA-Factory](https://github.com/hiyouga/LLaMA-Factory) to install LLaMA-Factory.
+
+For ChemCrow evaluation, please follow [@ChemCrow](https://github.com/ur-whitelab/chemcrow-public) and create a new environment for evaluation.
+
 ## 📖 Dataset Usage
 
 ### Data Downloading
@@ -51,7 +57,7 @@ The dataset is divided into five splits:
 - **QA_I**: 133 multimodal examples for standard evaluation.
 - **sampledQA**: 80 text-only examples suitable for human evaluation, validation, or low-resource scenarios.
 - **sampledQA_I**: 20 multimodal examples for similar use cases.
-- **scenario**: 520 real-world scenarios combined with 4090 open-ended questions.
+- **scenario**: 404 real-world scenarios combined with 3128 open-ended questions.
 
 After installing [Huggingface Datasets](https://huggingface.co/docs/datasets/quickstart), download the dataset by running:
 ```python
@@ -105,18 +111,22 @@ Each sample in the scenario configuration is a dictionary containing the followi
   - **Improper_Operation_Issues**: *list of strings*
   - **Negative_Lab_Environment_Impacts**: *list of strings*
   - **Most_Likely_Safety_Incidents**: *list of strings*
+- **Topic**: *string*  
+  A brief descriptor identifying the main hazard or equipment involved.
 - **SubCategory**: *string*  
   A subcategory label.
 - **Decisions**: *list of dicts*  
   Each dictionary contains:
   - **Decision**: *string*
   - **Consequence**: *string*
+- **Subject**: *string*  
+  A Subject label.
 
 ## 📝 Evaluations
 
 ### 1. API Key Setup
 
-Ensure that you have configured your OpenAI API key and any other required keys (e.g., for Claude or Gemini) in the `utils.py` file.
+Ensure that you have configured your OpenAI API key and any other required keys (e.g., for Claude or Gemini) in the `config.py` file.
 
 ### 2. Evaluations of Multiple-Choice Questions
 
@@ -124,7 +134,7 @@ LabSafety Bench supports evaluations for both text-only and multimodal tasks. Pr
 - **LLMs**: 'llama3-instruct-8b', 'vicuna-7b', 'mistral-7b', etc.
 - **VLMs (for multimodal tasks)**: 'instructBlip-7B', 'Qwen-VL-Chat', 'InternVL2', etc.
 
-Example commands for text-only MCQs evaluation:
+Example commands for text-only MCQs evaluation on sampled MCQ dataset:
 ```sh
 cd src/test
 
@@ -168,9 +178,104 @@ python decision_consequnce.py \
 --mode CoT
 ```
 
+For scenario hazards evaluation with set points:
+```sh
+python scenario_hazards_set_points.py \
+--models gpt-4o-mini \
+--mode DA \
+--num_points 10
+```
+
 ### 4. Evaluation of Additional Models
 
-To evaluate open-weight models not included in the predefined list in "src/config.py", please modify the model loading and inference procedures in `src/utils` and adjust the corresponding evaluation scripts accordingly.
+To evaluate open-weight models not included in the predefined list in "src/config.py", follow these steps:
+
+1. **Configure Model Paths**: 
+   First, add your model to `src/config.py` by setting the model name and path correspondence:
+   ```python
+   model_path_dicts = {
+       # ... existing models ...
+       "your-model-name": "/path/to/your/model",
+       "another-model": "/path/to/another/model"
+   }
+   ```
+
+2. **Run Evaluations**: 
+   After configuring the model paths, run the evaluations from **Section 2 (Multiple-Choice Questions)** and **Section 3 (Real-World Scenario Tasks)** using your model names:
+   ```sh
+   # Example for MCQ evaluation
+   python text_QA.py --models your-model-name --mode CoT --n_shots 0
+   
+   # Example for scenario evaluation  
+   python scenario_hazards.py --models your-model-name --mode DA
+   ```
+
+3. **Advanced Customization**: 
+   If needed, you can also modify the model loading and inference procedures in `src/utils` and adjust the corresponding evaluation scripts for specialized model architectures.
+
+## 🚀 SFT Training and Evaluation
+
+For all SFT settings, please first use LLaMA-Factory for training. The training datasets are located in `llamafactory_data`, which also includes `sft.yaml` as an SFT template. You only need to modify the dataset and output_dir to use it directly.
+
+### Training with LLaMA-Factory
+
+1. **Configure Dataset Registration**: 
+   First, modify the `LLaMA-Factory/data/dataset_info.json` file to register our SFT datasets:
+
+2. **Modify Training Configuration**: 
+   Navigate to your LLaMA-Factory installation directory and modify the `sft.yaml` configuration file in `llamafactory_data` with your desired dataset and output directory.
+
+3. **Run Training**:
+   ```bash
+   llamafactory-cli train sft.yaml
+   ```
+
+4. **Update Model Configuration**: 
+   After training completion, modify `src/config.py` to add the trained model path and name correspondence:
+   ```python
+   model_path_dicts = {
+       # ... existing models ...
+       "labsafety-text-qa": "/path/to/your/fine-tuned/text-qa-model",
+       "labsafety-scenario": "/path/to/your/fine-tuned/scenario-model", 
+       "labsafety-decision": "/path/to/your/fine-tuned/decision-model"
+   }
+   ```
+
+### Post-Training Evaluation
+
+After training completion, use the following specialized SFT evaluation scripts for testing:
+
+For MCQ evaluation with fine-tuned models:
+```sh
+cd src/test
+python text_QA_sft.py \
+--models labsafety-text-qa \
+--mode CoT
+```
+
+For scenario hazards evaluation with fine-tuned models:
+```sh
+python scenario_hazards_sft.py \
+--models labsafety-scenario \
+--mode DA
+```
+
+For consequence identification with fine-tuned models:
+```sh
+python decision_consequence_sft.py \
+--models labsafety-decision \
+--mode CoT
+```
+
+These evaluation scripts are based on the existing `scenario_hazards_sft.py`, `decision_consequence_sft.py`, and `text_QA_sft.py` files, which have been specifically adapted for fine-tuned model evaluation with proper model loading and testing procedures.
+
+### Further Analysis
+
+For detailed analysis of results, you can directly use the following evaluation scripts:
+- `src/analysis/category_acc.py` - Analyze accuracy by safety categories
+- `src/analysis/level_acc.py` - Analyze accuracy by difficulty levels  
+- `src/analysis/subject_acc.py` - Analyze accuracy by lab subjects
+
 
 ## ✅ Citation
 

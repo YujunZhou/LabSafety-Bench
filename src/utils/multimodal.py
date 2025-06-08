@@ -73,7 +73,7 @@ def load_image(image_file, input_size=448, max_num=12):
     pixel_values = torch.stack(pixel_values)
     return pixel_values
 
-# 多模态生成接口函数（部分示例）
+# Multimodal generation interface function (partial example)
 def analyze_image_with_prompt_gpt(image_path, prompt_text, model_name, sys_prompt):
     base64_image = encode_image(image_path)
     client = openai.OpenAI()
@@ -99,10 +99,10 @@ def analyze_image_with_prompt_gpt(image_path, prompt_text, model_name, sys_promp
     )
     return response.choices[0].message.content
 
-# 其余 analyze_image_with_prompt_* 函数同理…
+# Other analyze_image_with_prompt_* functions follow the same pattern...
 def analyze_image_with_prompt(model_name, image_path, prompt_text, sys_prompt, model=None, processor=None):
     if 'gpt-4' in model_name:
         return analyze_image_with_prompt_gpt(image_path, prompt_text, model_name, sys_prompt=sys_prompt)
-    # 根据实际情况，添加 gemini、claude、llava、instructBlip、Qwen、llama3_2 等函数调用
+    # According to actual situation, add gemini, claude, llava, instructBlip, Qwen, llama3_2 and other function calls
     else:
         raise ValueError("Invalid model name. Choose a supported model.") 
