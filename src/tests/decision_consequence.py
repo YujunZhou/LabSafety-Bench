@@ -28,6 +28,8 @@ from datasets import load_dataset
 # ------------------------- Configuration Section -------------------------
 # Dataset and prompt construction
 hf_dataset = load_dataset('yujunzhou/LabSafety_Bench', name='scenario', split='scenario')
+
+hf_dataset = [dict(hf_dataset[i]) for i in range(len(hf_dataset))]
 dataset = []
 for sample in hf_dataset:
     # Expand each decision as an independent question

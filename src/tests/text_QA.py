@@ -81,7 +81,7 @@ async def process_async_model(llm_name):
 
     dataset_copy = copy.deepcopy(dataset)
     # Keep only needed fields
-    dataset_copy = [{key: sample[key] for key in sample if key in ['Question', 'Correct Answer', 'Category', 'Topic', 'Knowledge Requirement Level']} for sample in dataset_copy]
+    dataset_copy = [{key: sample[key] for key in sample if key in ['Question', 'Correct Answer', 'Category', 'Topic', 'Level']} for sample in dataset_copy]
 
     # Define async call function for a single sample
     async def get_analysis(k, sample):
@@ -95,8 +95,7 @@ async def process_async_model(llm_name):
                         messages=[
                             {"role": "system", "content": sys_prompt},
                             {"role": "user", "content": sample}
-                        ],
-                        temperature=0,
+                        ]
                     )
                     analysis = resp.choices[0].message.content
                 elif 'gemini' in llm_name:
@@ -252,7 +251,7 @@ async def process_local_model(llm_name):
     conv_template.system_message = sys_prompt
 
     dataset_copy = copy.deepcopy(dataset)
-    dataset_copy = [{key: sample[key] for key in sample if key in ['Question', 'Correct Answer', 'Category', 'Topic', 'Knowledge Requirement Level']} for sample in dataset_copy]
+    dataset_copy = [{key: sample[key] for key in sample if key in ['Question', 'Correct Answer', 'Category', 'Topic', 'Level']} for sample in dataset_copy]
     answers = []
     success = 0
     analyses = llm_generate_QA_answer(QA_prompts, conv_template, target_llm, tokenizer, batch_size=64, random_sample=True)
@@ -313,7 +312,7 @@ if __name__ == '__main__':
     parser.add_argument("--mode", type=str, default="CoT", choices=["CoT", "DA"],
                         help="Mode: Direct Answer (DA) or Chain of Thought (CoT)")
     parser.add_argument("--use_hint", action="store_true", help="Use hint if flagged (default: False)")
-    parser.add_argument("--n_shots", type=int, default=5, help="Few-shot learning shots (default: 0)")
+    parser.add_argument("--n_shots", type=int, default=0, help="Few-shot learning shots (default: 0)")
     parser.add_argument("--sampled", action="store_true", help="Use sampled dataset if flagged (default: False)")
     args = parser.parse_args()
 
@@ -334,7 +333,7 @@ if __name__ == '__main__':
     questions = [sample['Question'] for sample in dataset]
     ground_truths = [sample['Correct Answer'] for sample in dataset]
     categories = [sample['Category'] for sample in dataset]
-    knowledge_levels = [sample['Knowledge Requirement Level'] for sample in dataset]
+    knowledge_levels = [sample['Level'] for sample in dataset]
     topics = [sample['Topic'] for sample in dataset]
 
     chain_of_thought_prompts = [f"Question: {questions[i]}\nStep-by-Step analysis: \nFinal Choice: " for i in

@@ -29,12 +29,14 @@ from datasets import load_dataset
 
 # ------------------------- Configuration Section -------------------------
 # Dataset and prompt construction
-dataset = load_dataset('yujunzhou/LabSafety_Bench', name='scenario', split='scenario')
+hf_dataset = load_dataset('yujunzhou/LabSafety_Bench', name='scenario', split='scenario')
+
+dataset = [dict(hf_dataset[i]) for i in range(len(hf_dataset))]
 
 # Extract various fields
 scenarios = [sample['Scenario'] for sample in dataset]
 ground_truths = [sample['LabSafety_Related_Issues'] for sample in dataset]
-categories = list(dataset[0]['LabSafety_Related_Issues'].keys())  # Use first hazard type as classification
+categories = ['Most_Common_Hazards', 'Improper_Operation_Issues', 'Negative_Lab_Environment_Impacts', 'Most_Likely_Safety_Incidents']
 questions_1 = [generate_lab_safety_prompts(scenario)[0] for scenario in scenarios]
 questions_2 = [generate_lab_safety_prompts(scenario)[1] for scenario in scenarios]
 questions_3 = [generate_lab_safety_prompts(scenario)[2] for scenario in scenarios]

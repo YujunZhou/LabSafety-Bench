@@ -30,6 +30,8 @@ from datasets import load_dataset
 # Dataset and prompt construction
 hf_dataset = load_dataset('yujunzhou/LabSafety_Bench', name='scenario', split='scenario')
 
+hf_dataset = [dict(hf_dataset[i]) for i in range(len(hf_dataset))]
+
 # Load test indices
 with open("../../llamafactory_data/test_scenario_indices.json", "r") as f:
     test_scenario_indices = json.load(f)
