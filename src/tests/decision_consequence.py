@@ -25,6 +25,78 @@ from utils.local_models import *
 from collections import defaultdict
 from datasets import load_dataset
 
+# ------------------------- Optional RAG Loader -------------------------
+RAG_RETRIEVER = None
+USE_RAG = False
+RAG_CONTEXTS_BY_INDEX = None  # list[str] | None
+RAG_CONTEXTS_BY_TEXT = None   # dict[str, str] | None
+
+def _load_rag_retriever(persist_dir: str, hf_model_name: str, top_k: int = 5):
+    try:
+        from llama_index.core import Settings, load_index_from_storage, StorageContext
+        from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+        Settings.llm = None
+        Settings.embed_model = HuggingFaceEmbedding(model_name=hf_model_name)
+        storage_context = StorageContext.from_defaults(persist_dir=persist_dir)
+        index = load_index_from_storage(storage_context)
+        return index.as_retriever(similarity_top_k=top_k)
+    except Exception as e:
+        print(f"[RAG] Failed to initialize retriever: {e}")
+        return None
+
+def _rag_hint_for_text(text: str) -> str:
+    if RAG_RETRIEVER is None:
+        return ""
+
+def _load_rag_contexts(path: str):
+    global RAG_CONTEXTS_BY_INDEX, RAG_CONTEXTS_BY_TEXT
+    try:
+        import json
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        def _sanitize(s: str) -> str:
+            try:
+                s = s.replace('\n', ' ').replace('\r', ' ')
+                s = ' '.join(s.split())
+                return s
+            except Exception:
+                return s
+        if isinstance(data, list):
+            RAG_CONTEXTS_BY_INDEX = [(_sanitize(x) if isinstance(x, str) else x) for x in data]
+            RAG_CONTEXTS_BY_TEXT = None
+        elif isinstance(data, dict):
+            if 'by_index' in data and isinstance(data['by_index'], list):
+                RAG_CONTEXTS_BY_INDEX = [(_sanitize(x) if isinstance(x, str) else x) for x in data['by_index']]
+            if 'by_text' in data and isinstance(data['by_text'], dict):
+                RAG_CONTEXTS_BY_TEXT = {k: (_sanitize(v) if isinstance(v, str) else v) for k, v in data['by_text'].items()}
+        print(f"[RAG] Loaded precomputed contexts from {path}")
+    except Exception as e:
+        print(f"[RAG] Failed to load contexts from {path}: {e}")
+        RAG_CONTEXTS_BY_INDEX = None
+        RAG_CONTEXTS_BY_TEXT = None
+
+def _get_ctx_for(idx: int, text: str) -> str:
+    if RAG_CONTEXTS_BY_INDEX is not None and 0 <= idx < len(RAG_CONTEXTS_BY_INDEX):
+        ctx = RAG_CONTEXTS_BY_INDEX[idx] or ""
+        if ctx:
+            return ctx
+    if RAG_CONTEXTS_BY_TEXT is not None:
+        ctx = RAG_CONTEXTS_BY_TEXT.get(text) or ""
+        if ctx:
+            return ctx
+    return _rag_hint_for_text(text) if USE_RAG else ""
+    try:
+        nodes = RAG_RETRIEVER.retrieve(text)
+        parts = []
+        for n in nodes:
+            snippet = (n.node.get_content() or '').strip()
+            snippet = snippet[:600] + ("..." if len(snippet) > 600 else "")
+            parts.append(snippet)
+        return "\n\n".join(parts)
+    except Exception as e:
+        print(f"[RAG] retrieve error: {e}")
+        return ""
+
 # ------------------------- Configuration Section -------------------------
 # Dataset and prompt construction
 hf_dataset = load_dataset('yujunzhou/LabSafety_Bench', name='scenario', split='scenario')
@@ -68,6 +140,39 @@ deepinfra_client = AsyncClient(
     base_url="https://api.deepinfra.com/v1/openai",
 )
 genai.configure(api_key=os.environ.get("GOOGLE_API_KEY"))
+# ------------------------- Optional RAG Loader -------------------------
+RAG_RETRIEVER = None
+
+def _load_rag_retriever(persist_dir: str, hf_model_name: str, top_k: int = 5):
+    try:
+        from llama_index.core import Settings, load_index_from_storage, StorageContext
+        from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+        Settings.llm = None
+        Settings.embed_model = HuggingFaceEmbedding(model_name=hf_model_name)
+        storage_context = StorageContext.from_defaults(persist_dir=persist_dir)
+        index = load_index_from_storage(storage_context)
+        return index.as_retriever(similarity_top_k=top_k)
+    except Exception as e:
+        print(f"[RAG] Failed to initialize retriever: {e}")
+        return None
+
+def _rag_hint_for_text(text: str) -> str:
+    if RAG_RETRIEVER is None:
+        return ""
+    try:
+        nodes = RAG_RETRIEVER.retrieve(text)
+        parts = []
+        for n in nodes:
+            meta = getattr(n.node, 'metadata', {}) or {}
+            src = meta.get('file_path') or meta.get('filename') or 'unknown'
+            snippet = (n.node.get_content() or '').strip()
+            snippet = snippet[:600] + ("..." if len(snippet) > 600 else "")
+            parts.append(f"Source: {src}\n{snippet}")
+        return "\n\n".join(parts)
+    except Exception as e:
+        print(f"[RAG] retrieve error: {e}")
+        return ""
+
 
 # ------------------------- Evaluation Metrics Calculation -------------------------
 def calculate_metrics(dataset_copy):
@@ -145,41 +250,50 @@ def get_common_config(mode):
 async def process_model_common_setup(model_name, mode):
     """Common initialization"""
     os.makedirs(f'../../Logs/{model_name}', exist_ok=True)
-    log_path = f'../../Logs/{model_name}/result_decision_consequence.txt'
+    rag_active = USE_RAG or (RAG_CONTEXTS_BY_INDEX is not None or RAG_CONTEXTS_BY_TEXT is not None)
+    rag_suffix = "_RAG" if rag_active else ""
+    log_path = f'../../Logs/{model_name}/result_decision_consequence{rag_suffix}.txt'
     
     dataset_copy = copy.deepcopy(dataset)
     # Keep necessary fields
     keep_keys = ['Scenario', 'Decision', 'Consequence', 'Subject']
     dataset_copy = [{k: v for k, v in s.items() if k in keep_keys} for s in dataset_copy]
     
-    return log_path, dataset_copy
+    return log_path, dataset_copy, rag_suffix, rag_active
 
 # ------------------------- Model Processing Logic -------------------------
 async def process_async_model(model_name):
     config = get_common_config(MODE)
-    log_path, dataset_copy = await process_model_common_setup(model_name, MODE)
+    log_path, dataset_copy, rag_suffix, rag_active = await process_model_common_setup(model_name, MODE)
 
     with open(log_path, 'a') as log_f:
         print(f"Testing {model_name}", file=log_f)
+        print(f"USE_RAG: {USE_RAG}, HAS_PRECOMPUTED_CTX: {bool(RAG_CONTEXTS_BY_INDEX or RAG_CONTEXTS_BY_TEXT)}", file=log_f, flush=True)
 
         async def model_query(prompt):
             max_retries = 10
             for retry in range(max_retries):
                 try:
+                    # Compose augmented prompt with optional RAG context
+                    ctx = _get_ctx_for(0, prompt)  # index-less; use text mapping or fallback
+                    if ctx:
+                        prompt_aug = "Based on the following knowledge to answer the following question. Give me a short answer.\n" + ctx + "\n" + prompt
+                    else:
+                        prompt_aug = prompt
                     if 'o3-mini' in model_name:
                         client = openai.Client()
                         response = await asyncio.to_thread(lambda: client.chat.completions.create(
                             model=model_name,
                             messages=[
                                 {"role": "system", "content": config["sys_prompt"]},
-                                {"role": "user", "content": prompt}
+                                {"role": "user", "content": prompt_aug}
                             ]
                         ))
                         return response.choices[0].message.content
                     if 'gemini' in model_name:
                         model = genai.GenerativeModel(model_name)
                         response = await model.generate_content_async(
-                            config["sys_prompt"] + "\n" + prompt,
+                            config["sys_prompt"] + "\n" + prompt_aug,
                             safety_settings={c: HarmBlockThreshold.BLOCK_NONE for c in [
                                 HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
                                 HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
@@ -193,7 +307,7 @@ async def process_async_model(model_name):
                             model=model_path_dicts[model_name],
                             max_tokens=512,
                             system=config["sys_prompt"],
-                            messages=[{"role": "user", "content": prompt}]
+                            messages=[{"role": "user", "content": prompt_aug}]
                         )
                         return resp.content[0].text
                     elif 'gpt' in model_name or 'o1' in model_name:
@@ -201,7 +315,7 @@ async def process_async_model(model_name):
                             model=model_name,
                             messages=[
                                 {"role": "system", "content": config["sys_prompt"]},
-                                {"role": "user", "content": prompt}
+                                {"role": "user", "content": prompt_aug}
                             ],
                             temperature=0
                         )
@@ -211,7 +325,7 @@ async def process_async_model(model_name):
                             model=model_path_dicts[model_name],
                             messages=[
                                 {"role": "system", "content": config["sys_prompt"]},
-                                {"role": "user", "content": prompt}
+                                {"role": "user", "content": prompt_aug}
                             ],
                             temperature=0
                         )
@@ -260,7 +374,7 @@ async def process_async_model(model_name):
         
         pbar.close()
         # Save results
-        json.dump(dataset_copy, open(f'../../Logs/{model_name}/{MODE}_results_decision_consequence.json', 'w'), indent=4)
+        json.dump(dataset_copy, open(f'../../Logs/{model_name}/{MODE}_results_decision_consequence{rag_suffix}.json', 'w'), indent=4)
         metrics = calculate_metrics(dataset_copy)
         print(json.dumps(metrics, indent=2), file=log_f)
     
@@ -268,10 +382,11 @@ async def process_async_model(model_name):
 
 async def process_local_model(model_name):
     config = get_common_config(MODE)
-    log_path, dataset_copy = await process_model_common_setup(model_name, MODE)
+    log_path, dataset_copy, rag_suffix, rag_active = await process_model_common_setup(model_name, MODE)
 
     with open(log_path, 'a') as log_f:
         print(f"Testing {model_name}", file=log_f)
+        print(f"USE_RAG: {USE_RAG}, HAS_PRECOMPUTED_CTX: {bool(RAG_CONTEXTS_BY_INDEX or RAG_CONTEXTS_BY_TEXT)}", file=log_f, flush=True)
 
         # Load model
         model_path = model_path_dicts.get(model_name)
@@ -308,7 +423,7 @@ async def process_local_model(model_name):
             dataset_copy[i]['Score'] = scores[i]
 
         # Save results
-        json.dump(dataset_copy, open(f'../../Logs/{model_name}/{MODE}_results_decision_consequence.json', 'w'), indent=4)
+        json.dump(dataset_copy, open(f'../../Logs/{model_name}/{MODE}_results_decision_consequence{rag_suffix}.json', 'w'), indent=4)
         metrics = calculate_metrics(dataset_copy)
         print(json.dumps(metrics, indent=2), file=log_f)
     
@@ -329,12 +444,25 @@ if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--models", type=str, default="llama3.3-70b,mistral-8x7b",
+    parser.add_argument("--models", type=str, default='mistral,llama3-instruct,vicuna,vicuna-13b',
                        help="List of models to test, comma-separated")
     parser.add_argument("--mode", type=str, default="DA", choices=["DA", "CoT"])
+    # RAG args
+    parser.add_argument("--use_rag", action="store_true", help="Enable RAG enhancement (default False)")
+    parser.add_argument("--rag_persist_dir", type=str, default=None, help="RAG index persistence directory (use with --use_rag)")
+    parser.add_argument("--rag_top_k", type=int, default=2, help="Number of similar documents returned by RAG")
+    parser.add_argument("--rag_hf_model", type=str, default="BAAI/bge-m3", help="HF embedding model used by RAG")
+    parser.add_argument("--rag_context_path", type=str, default="../../data/rag_contexts_decision.json", help="Precomputed RAG context JSON (list or {by_index|by_text})")
     args = parser.parse_args()
 
     MODE = args.mode
     target_models = [m.strip() for m in args.models.split(",")]
+
+    # Initialize optional RAG retriever
+    USE_RAG = args.use_rag
+    if args.rag_context_path:
+        _load_rag_contexts(args.rag_context_path)
+    if USE_RAG and args.rag_persist_dir and RAG_CONTEXTS_BY_INDEX is None and RAG_CONTEXTS_BY_TEXT is None:
+        RAG_RETRIEVER = _load_rag_retriever(args.rag_persist_dir, args.rag_hf_model, args.rag_top_k)
 
     asyncio.run(main(target_models)) 

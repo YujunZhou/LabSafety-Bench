@@ -91,6 +91,93 @@ deepinfra_client = AsyncClient(
 genai.configure(api_key=os.environ.get("GOOGLE_API_KEY"))
 
 
+# ------------------------- Optional RAG Loader -------------------------
+RAG_RETRIEVER = None
+USE_RAG = False
+# Precomputed contexts for four variants
+RAG_CTX_V1 = None  # list[str] | None
+RAG_CTX_V2 = None
+RAG_CTX_V3 = None
+RAG_CTX_V4 = None
+
+def _load_rag_retriever(persist_dir: str, hf_model_name: str, top_k: int = 5):
+    try:
+        from llama_index.core import Settings, load_index_from_storage, StorageContext
+        from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+        Settings.llm = None
+        Settings.embed_model = HuggingFaceEmbedding(model_name=hf_model_name)
+        storage_context = StorageContext.from_defaults(persist_dir=persist_dir)
+        index = load_index_from_storage(storage_context)
+        return index.as_retriever(similarity_top_k=top_k)
+    except Exception as e:
+        print(f"[RAG] Failed to initialize retriever: {e}")
+        return None
+
+def _rag_hint_for_text(text: str) -> str:
+    if RAG_RETRIEVER is None:
+        return ""
+
+def _load_context_list(path: str):
+    try:
+        import json
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            def _sanitize(s: str) -> str:
+                try:
+                    s = s.replace('\n', ' ').replace('\r', ' ')
+                    s = ' '.join(s.split())
+                    return s
+                except Exception:
+                    return s
+            lst = [(_sanitize(x) if isinstance(x, str) else x) for x in data]
+        elif isinstance(data, dict) and 'by_index' in data and isinstance(data['by_index'], list):
+            def _sanitize(s: str) -> str:
+                try:
+                    s = s.replace('\n', ' ').replace('\r', ' ')
+                    s = ' '.join(s.split())
+                    return s
+                except Exception:
+                    return s
+            lst = [(_sanitize(x) if isinstance(x, str) else x) for x in data['by_index']]
+        else:
+            lst = None
+        if lst is None:
+            print(f"[RAG] Unsupported context format in {path}")
+        else:
+            print(f"[RAG] Loaded {len(lst)} precomputed contexts from {path}")
+        return lst
+    except Exception as e:
+        print(f"[RAG] Failed to load contexts from {path}: {e}")
+        return None
+
+def _get_ctx_for_variant(variant_id: int, idx: int, text: str) -> str:
+    lst = None
+    if variant_id == 1:
+        lst = RAG_CTX_V1
+    elif variant_id == 2:
+        lst = RAG_CTX_V2
+    elif variant_id == 3:
+        lst = RAG_CTX_V3
+    elif variant_id == 4:
+        lst = RAG_CTX_V4
+    if lst is not None and 0 <= idx < len(lst):
+        ctx = lst[idx] or ""
+        if ctx:
+            return ctx
+    return _rag_hint_for_text(text) if USE_RAG else ""
+    try:
+        nodes = RAG_RETRIEVER.retrieve(text)
+        parts = []
+        for n in nodes:
+            snippet = (n.node.get_content() or '').strip()
+            snippet = snippet[:600] + ("..." if len(snippet) > 600 else "")
+            parts.append(snippet)
+        return "\n\n".join(parts)
+    except Exception as e:
+        print(f"[RAG] retrieve error: {e}")
+        return ""
+
 def calculate_metrics(dataset_copy):
         # Initialize statistics data structure
         category_stats = {f"Q{i+1}": {"total": 0, "correct": 0} for i in range(4)}
@@ -190,14 +277,16 @@ def get_common_config(mode):
 async def process_model_common_setup(llm_name, mode):
     """Common initialization logic"""
     os.makedirs(f'../../Logs/{llm_name}', exist_ok=True)
-    log_path = f'../../Logs/{llm_name}/result_scenario_hazards.txt'
+    rag_active = USE_RAG or any([RAG_CTX_V1, RAG_CTX_V2, RAG_CTX_V3, RAG_CTX_V4])
+    rag_suffix = "_RAG" if rag_active else ""
+    log_path = f'../../Logs/{llm_name}/result_scenario_hazards{rag_suffix}.txt'
     
     dataset_copy = copy.deepcopy(dataset)
     # Keep essential fields logic
     keep_keys = ['Scenario', 'LabSafety_Related_Issues', 'Subject']
     dataset_copy = [{k: v for k, v in sample.items() if k in keep_keys} for sample in dataset_copy]
     
-    return log_path, dataset_copy
+    return log_path, dataset_copy, rag_suffix, rag_active
 
 async def batch_score_answers(global_indices, analyses_batch, q_idx):
     """Unified scoring logic (combining async and local model scoring processing)"""
@@ -228,10 +317,11 @@ async def batch_score_answers(global_indices, analyses_batch, q_idx):
 # ------------------------- Model Processing Logic -------------------------
 async def process_async_model(llm_name):
     mode_config = get_common_config(MODE)
-    log_path, dataset_copy = await process_model_common_setup(llm_name, MODE)
+    log_path, dataset_copy, rag_suffix, rag_active = await process_model_common_setup(llm_name, MODE)
     
     with open(log_path, 'a') as log_f:
         print(llm_name, file=log_f, flush=True)
+        print(f"USE_RAG: {USE_RAG}, PRECOMPUTED_CTX: {bool(RAG_CTX_V1 or RAG_CTX_V2 or RAG_CTX_V3 or RAG_CTX_V4)}", file=log_f, flush=True)
 
         async def model_specific_handler(params):
             """Query the target async model with specified prompt"""
@@ -243,18 +333,25 @@ async def process_async_model(llm_name):
                 try:
                     if llm_name == 'o3-mini':
                         client = openai.Client()
+                        # Insert RAG hint
+                        sample_input = sample
+                        hint = _get_ctx_for_variant(q_idx + 1, k, sample)
+                        if hint:
+                            sample_input = "Based on the following knowledge to answer the following question. Give me a short answer.\n" + hint + "\n" + sample
                         response = await asyncio.to_thread(lambda: client.chat.completions.create(
                             model=llm_name,
                             messages=[
                                 {"role": "system", "content": mode_config["sys_prompt"]},
-                                {"role": "user", "content": sample}
+                                {"role": "user", "content": sample_input}
                             ]
                         ))
                         return (k, response.choices[0].message.content)
                     elif 'gemini' in llm_name:
                         model = genai.GenerativeModel(llm_name)
+                        hint = _get_ctx_for_variant(q_idx + 1, k, sample)
+                        sample_input = sample if not hint else ("Based on the following knowledge to answer the following question. Give me a short answer.\n" + hint + "\n" + sample)
                         result = await model.generate_content_async(
-                            mode_config["sys_prompt"] + '\n' + sample,
+                            mode_config["sys_prompt"] + '\n' + sample_input,
                             safety_settings={c: HarmBlockThreshold.BLOCK_NONE for c in [
                                 HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
                                 HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
@@ -264,30 +361,36 @@ async def process_async_model(llm_name):
                         )
                         return (k, result.text)
                     elif 'claude' in llm_name:
+                        hint = _get_ctx_for_variant(q_idx + 1, k, sample)
+                        sample_input = sample if not hint else ("Based on the following knowledge to answer the following question. Give me a short answer.\n" + hint + "\n" + sample)
                         resp = await anthropic_client.messages.create(
                             model=model_path_dicts[llm_name],
                             max_tokens=512,
                             system=mode_config["sys_prompt"],
-                            messages=[{"role": "user", "content": sample}]
+                            messages=[{"role": "user", "content": sample_input}]
                         )
                         return (k, resp.content[0].text)
                     elif 'gpt' in llm_name or 'o1' in llm_name:
+                        hint = _get_ctx_for_variant(q_idx + 1, k, sample)
+                        sample_input = sample if not hint else ("Based on the following knowledge to answer the following question. Give me a short answer.\n" + hint + "\n" + sample)
                         resp = await async_client.chat.completions.create(
                             model=llm_name,
                             messages=[
                                 {"role": "system", "content": mode_config["sys_prompt"]},
-                                {"role": "user", "content": sample}
+                                {"role": "user", "content": sample_input}
                             ],
                             max_tokens=512,
                             temperature=0
                         )
                         return (k, resp.choices[0].message.content)
                     else:
+                        hint = _rag_hint_for_text(sample)
+                        sample_input = sample if not hint else ("Based on the following knowledge to answer the following question. Give me a short answer.\n" + hint + "\n" + sample)
                         resp = await deepinfra_client.chat.completions.create(
                             model=model_path_dicts[llm_name],
                             messages=[
                                 {"role": "system", "content": mode_config["sys_prompt"]},
-                                {"role": "user", "content": sample}
+                                {"role": "user", "content": sample_input}
                             ],
                             temperature=0
                         )
@@ -337,7 +440,7 @@ async def process_async_model(llm_name):
                 time.sleep(20)
 
         # Save results and calculate metrics
-        json.dump(dataset_copy, open(f'../../Logs/{llm_name}/{MODE}_result_scenario_hazards.json', 'w'), indent=4)
+        json.dump(dataset_copy, open(f'../../Logs/{llm_name}/{MODE}_result_scenario_hazards{rag_suffix}.json', 'w'), indent=4)
         metrics = calculate_metrics(dataset_copy)
         print(f"Metrics for {llm_name}:", file=log_f)
         print(json.dumps(metrics, indent=2), file=log_f)
@@ -346,10 +449,11 @@ async def process_async_model(llm_name):
 
 async def process_local_model(llm_name):
     config = get_common_config(MODE)
-    log_path, dataset_copy = await process_model_common_setup(llm_name, MODE)
+    log_path, dataset_copy, rag_suffix, rag_active = await process_model_common_setup(llm_name, MODE)
     
     with open(log_path, 'a') as log_f:
         print(llm_name, file=log_f, flush=True)
+        print(f"USE_RAG: {USE_RAG}, PRECOMPUTED_CTX: {bool(RAG_CTX_V1 or RAG_CTX_V2 or RAG_CTX_V3 or RAG_CTX_V4)}", file=log_f, flush=True)
 
         # Load local model
         model_path = model_path_dicts.get(llm_name)
@@ -391,7 +495,7 @@ async def process_local_model(llm_name):
                     dataset_copy[global_k][f'Detailed_Score_{q_idx+1}'] = score_dict[global_k]
 
         # Save results and calculate metrics
-        json.dump(dataset_copy, open(f'../../Logs/{llm_name}/{MODE}_result_scenario_hazards.json', 'w'), indent=4)
+        json.dump(dataset_copy, open(f'../../Logs/{llm_name}/{MODE}_result_scenario_hazards{rag_suffix}.json', 'w'), indent=4)
         metrics = calculate_metrics(dataset_copy)
         print(f"Metrics for {llm_name}:", file=log_f)
         print(json.dumps(metrics, indent=2), file=log_f)
@@ -415,14 +519,38 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Unified test for LLM models")
     # gemini-1.5-flash, gemini-1.5-pro, gemini-2.0-flash, gpt-4o-mini, gpt-4o, o3-mini, claude3-haiku, claude3.5-sonnet, deepseek-r1, llama3.3-70b,mistral-8x7b
     # vicuna, mistral, llama3-instruct, vicuna-13b
-    parser.add_argument("--models", type=str, default="gpt-4o-mini",
+    parser.add_argument("--models", type=str, default='mistral,llama3-instruct,vicuna,vicuna-13b',
                         help="Comma-separated list of model names to test")
     parser.add_argument("--mode", type=str, default="DA", choices=["DA", "CoT"],
                         help="Mode: Direct Answer (DA) or Chain of Thought (CoT)")
+    # RAG arguments
+    parser.add_argument("--use_rag", action="store_true", help="Enable RAG enhancement (default False)")
+    parser.add_argument("--rag_persist_dir", type=str, default=None, help="RAG index persistence directory (use with --use_rag)")
+    parser.add_argument("--rag_top_k", type=int, default=2, help="Number of similar documents returned by RAG")
+    parser.add_argument("--rag_hf_model", type=str, default="BAAI/bge-m3", help="HF embedding model used by RAG")
+    parser.add_argument("--rag_context_v1", type=str, default="../../data/rag_contexts_scenario_v1.json", help="Context JSON for variant 1")
+    parser.add_argument("--rag_context_v2", type=str, default="../../data/rag_contexts_scenario_v2.json", help="Context JSON for variant 2")
+    parser.add_argument("--rag_context_v3", type=str, default="../../data/rag_contexts_scenario_v3.json", help="Context JSON for variant 3")
+    parser.add_argument("--rag_context_v4", type=str, default="../../data/rag_contexts_scenario_v4.json", help="Context JSON for variant 4")
     args = parser.parse_args()
 
     # Assign command line parameters to global variables
     MODE = args.mode
     target_models_arg = [x.strip() for x in args.models.split(",")]
+
+    # Initialize optional RAG retriever
+    USE_RAG = args.use_rag
+    # Load four variant contexts if files exist
+    if args.rag_context_v1:
+        RAG_CTX_V1 = _load_context_list(args.rag_context_v1)
+    if args.rag_context_v2:
+        RAG_CTX_V2 = _load_context_list(args.rag_context_v2)
+    if args.rag_context_v3:
+        RAG_CTX_V3 = _load_context_list(args.rag_context_v3)
+    if args.rag_context_v4:
+        RAG_CTX_V4 = _load_context_list(args.rag_context_v4)
+
+    if USE_RAG and args.rag_persist_dir and not any([RAG_CTX_V1, RAG_CTX_V2, RAG_CTX_V3, RAG_CTX_V4]):
+        RAG_RETRIEVER = _load_rag_retriever(args.rag_persist_dir, args.rag_hf_model, args.rag_top_k)
 
     asyncio.run(main(target_models_arg)) 

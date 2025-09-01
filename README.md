@@ -213,6 +213,160 @@ To evaluate open-weight models not included in the predefined list in "src/confi
 3. **Advanced Customization**: 
    If needed, you can also modify the model loading and inference procedures in `src/utils` and adjust the corresponding evaluation scripts for specialized model architectures.
 
+## 🔍 RAG (Retrieval-Augmented Generation) Enhancement
+
+LabSafety Bench supports RAG enhancement to improve model performance by providing relevant safety knowledge context. The RAG system can retrieve pertinent information from safety documents to assist models in answering questions more accurately.
+
+### RAG Setup
+
+1. **Install Dependencies**:
+   ```bash
+   pip install llama-index
+   ```
+
+2. **Prepare Safety Documents**:
+   Place your safety documents (PDF, TXT, etc.) in a directory. These should include:
+   - Laboratory safety protocols
+   - Chemical safety data sheets
+   - Equipment operation manuals
+   - Safety guidelines and regulations
+
+3. **Build RAG Index**:
+   ```bash
+   cd src/rag
+   python build_index.py \
+   --input_dir /path/to/your/safety/documents \
+   --persist_dir ./storage/safety_index \
+   --embed_backend hf \
+   --hf_model_name BAAI/bge-m3
+   ```
+
+### Using RAG in Evaluations
+
+#### Option 1: Real-time RAG Retrieval
+
+Enable RAG during evaluation by adding the `--use_rag` flag:
+
+```sh
+# MCQ evaluation with RAG
+python text_QA.py \
+--models gpt-4o-mini \
+--mode CoT \
+--use_rag \
+--rag_persist_dir ./storage/safety_index \
+--rag_top_k 2 \
+--rag_hf_model BAAI/bge-m3
+
+# Scenario evaluation with RAG
+python scenario_hazards.py \
+--models gpt-4o-mini \
+--mode DA \
+--use_rag \
+--rag_persist_dir ./storage/safety_index \
+--rag_top_k 2
+
+# Decision consequence evaluation with RAG
+python decision_consequence.py \
+--models gpt-4o-mini \
+--mode CoT \
+--use_rag \
+--rag_persist_dir ./storage/safety_index \
+--rag_top_k 2
+```
+
+#### Option 2: Precomputed RAG Contexts
+
+For faster evaluation, you can precompute RAG contexts and save them to JSON files:
+
+```bash
+# Generate contexts for text QA
+python generate_contexts.py \
+--persist_dir ./storage/safety_index \
+--dataset text_qa \
+--out ../../data/rag_contexts_text_qa.json
+
+# Generate contexts for scenario variants
+python generate_contexts.py \
+--persist_dir ./storage/safety_index \
+--dataset scenario \
+--scenario_variant 1 \
+--out ../../data/rag_contexts_scenario_v1.json
+
+python generate_contexts.py \
+--persist_dir ./storage/safety_index \
+--dataset scenario \
+--scenario_variant 2 \
+--out ../../data/rag_contexts_scenario_v2.json
+
+python generate_contexts.py \
+--persist_dir ./storage/safety_index \
+--dataset scenario \
+--scenario_variant 3 \
+--out ../../data/rag_contexts_scenario_v3.json
+
+python generate_contexts.py \
+--persist_dir ./storage/safety_index \
+--dataset scenario \
+--scenario_variant 4 \
+--out ../../data/rag_contexts_scenario_v4.json
+
+# Generate contexts for decision consequence
+python generate_contexts.py \
+--persist_dir ./storage/safety_index \
+--dataset decision \
+--out ../../data/rag_contexts_decision.json
+```
+
+Then use the precomputed contexts in evaluations:
+
+```sh
+# MCQ evaluation with precomputed contexts
+python text_QA.py \
+--models gpt-4o-mini \
+--mode CoT \
+--rag_context_path ../../data/rag_contexts_text_qa.json
+
+# Scenario evaluation with precomputed contexts
+python scenario_hazards.py \
+--models gpt-4o-mini \
+--mode DA \
+--rag_context_v1 ../../data/rag_contexts_scenario_v1.json \
+--rag_context_v2 ../../data/rag_contexts_scenario_v2.json \
+--rag_context_v3 ../../data/rag_contexts_scenario_v3.json \
+--rag_context_v4 ../../data/rag_contexts_scenario_v4.json
+
+# Decision consequence evaluation with precomputed contexts
+python decision_consequence.py \
+--models gpt-4o-mini \
+--mode CoT \
+--rag_context_path ../../data/rag_contexts_decision.json
+```
+
+### RAG Tools
+
+The `src/rag/` directory contains several utility scripts:
+
+- **`build_index.py`**: Build or reload a LlamaIndex vector index from safety documents
+- **`query_rag.py`**: Query an existing RAG index and print sources
+- **`generate_contexts.py`**: Precompute RAG contexts for datasets and save to JSON
+- **`evaluate_text_qa.py`**: Batch evaluate Text-QA using RAG query engine
+
+### RAG Configuration Options
+
+- **`--use_rag`**: Enable RAG enhancement (default: False)
+- **`--rag_persist_dir`**: RAG index persistence directory
+- **`--rag_top_k`**: Number of similar documents returned by RAG (default: 2)
+- **`--rag_hf_model`**: HF embedding model used by RAG (default: "BAAI/bge-m3")
+- **`--rag_context_path`**: Precomputed RAG context JSON file
+- **`--rag_context_v1/v2/v3/v4`**: Precomputed context files for scenario variants
+
+### Performance Considerations
+
+- **Real-time RAG**: Slower but more flexible, retrieves relevant context for each query
+- **Precomputed contexts**: Faster evaluation, contexts are pre-generated and cached
+- **Embedding models**: Choose appropriate embedding models based on your document language and domain
+- **Top-k selection**: Adjust the number of retrieved documents based on your needs (typically 2-5)
+
 ## 🚀 SFT Training and Evaluation
 
 For all SFT settings, please first use LLaMA-Factory for training. The training datasets are located in `llamafactory_data`, which also includes `sft.yaml` as an SFT template. You only need to modify the dataset and output_dir to use it directly.

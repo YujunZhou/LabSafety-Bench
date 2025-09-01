@@ -35,12 +35,85 @@ deepinfra_client = AsyncClient(
 )
 genai.configure(api_key=os.environ.get("GOOGLE_API_KEY"))
 
+# ------------------------- Optional RAG Loader -------------------------
+RAG_RETRIEVER = None
+RAG_TOP_K = 5
+USE_RAG = False
+RAG_CONTEXTS_BY_INDEX = None  # list[str] | None
+RAG_CONTEXTS_BY_TEXT = None   # dict[str, str] | None
+
+def _load_rag_retriever(persist_dir: str, hf_model_name: str, top_k: int = 5):
+    try:
+        from llama_index.core import Settings, load_index_from_storage, StorageContext
+        from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+        Settings.llm = None
+        Settings.embed_model = HuggingFaceEmbedding(model_name=hf_model_name)
+        storage_context = StorageContext.from_defaults(persist_dir=persist_dir)
+        index = load_index_from_storage(storage_context)
+        return index.as_retriever(similarity_top_k=top_k)
+    except Exception as e:
+        print(f"[RAG] Failed to initialize retriever: {e}")
+        return None
+
+def _rag_hint_for_text(text: str) -> str:
+    if RAG_RETRIEVER is None:
+        return ""
+    try:
+        nodes = RAG_RETRIEVER.retrieve(text)
+        parts = []
+        for n in nodes:
+            snippet = (n.node.get_content() or '').strip()
+            snippet = snippet[:500] + ("..." if len(snippet) > 500 else "")
+            parts.append(snippet)
+        return "\n\n".join(parts)
+    except Exception as e:
+        print(f"[RAG] retrieve error: {e}")
+        return ""
+
+def _load_rag_contexts(path: str):
+    global RAG_CONTEXTS_BY_INDEX, RAG_CONTEXTS_BY_TEXT
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        def _sanitize(s: str) -> str:
+            try:
+                # replace newlines with spaces and collapse multiple spaces
+                s = s.replace('\n', ' ').replace('\r', ' ')
+                s = ' '.join(s.split())
+                return s
+            except Exception:
+                return s
+        if isinstance(data, list):
+            RAG_CONTEXTS_BY_INDEX = [(_sanitize(x) if isinstance(x, str) else x) for x in data]
+            RAG_CONTEXTS_BY_TEXT = None
+        elif isinstance(data, dict):
+            if 'by_index' in data and isinstance(data['by_index'], list):
+                RAG_CONTEXTS_BY_INDEX = [(_sanitize(x) if isinstance(x, str) else x) for x in data['by_index']]
+            if 'by_text' in data and isinstance(data['by_text'], dict):
+                RAG_CONTEXTS_BY_TEXT = {k: (_sanitize(v) if isinstance(v, str) else v) for k, v in data['by_text'].items()}
+        print(f"[RAG] Loaded precomputed contexts from {path}")
+    except Exception as e:
+        print(f"[RAG] Failed to load contexts from {path}: {e}")
+        RAG_CONTEXTS_BY_INDEX = None
+        RAG_CONTEXTS_BY_TEXT = None
+
+def _get_ctx_for(idx: int, text: str) -> str:
+    if RAG_CONTEXTS_BY_INDEX is not None and 0 <= idx < len(RAG_CONTEXTS_BY_INDEX):
+        ctx = RAG_CONTEXTS_BY_INDEX[idx] or ""
+        if ctx:
+            return ctx
+    if RAG_CONTEXTS_BY_TEXT is not None:
+        ctx = RAG_CONTEXTS_BY_TEXT.get(text) or ""
+        if ctx:
+            return ctx
+    return _rag_hint_for_text(text) if USE_RAG else ""
+
 # Answer extraction module, used to extract final answer from LLM analysis
 async def async_answer_extract(analysis_text):
     """Asynchronous answer extraction function"""
     try:
         resp = await async_client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": Answer_Extraction_SYS_Prompt},
                 {"role": "user", "content": analysis_text}
@@ -56,9 +129,11 @@ async def async_answer_extract(analysis_text):
 async def process_async_model(llm_name):
     print(f"Processing async model: {llm_name}")
     os.makedirs(f'../../Logs/{llm_name}', exist_ok=True)
-    log_path = f'../../Logs/{llm_name}/result.txt'
+    rag_suffix = "_RAG" if USE_RAG else ""
+    log_path = f'../../Logs/{llm_name}/result{rag_suffix}.txt'
     log_f = open(log_path, 'a')
     print(llm_name, file=log_f, flush=True)
+    print(f"USE_RAG: {USE_RAG}", file=log_f, flush=True)
 
     # Use mode passed from command line
     mode = MODE
@@ -84,17 +159,31 @@ async def process_async_model(llm_name):
     dataset_copy = [{key: sample[key] for key in sample if key in ['Question', 'Correct Answer', 'Category', 'Topic', 'Level']} for sample in dataset_copy]
 
     # Define async call function for a single sample
+    first_input_printed = False
     async def get_analysis(k, sample):
+        nonlocal first_input_printed
         false_count = 0
         while false_count < 3:
             try:
+                # Compose augmented prompt from independent options: RAG and/or Hints
+                contexts = []
+                rag_ctx = _get_ctx_for(k, sample) if USE_RAG else ""
+                if rag_ctx:
+                    contexts.append("Retrieved Knowledge:\n" + rag_ctx)
+                if use_hint and hints is not None and len(hints) > k and hints[k]:
+                    contexts.append("Provided Hint:\n" + hints[k])
+                prefix = ("Based on the following knowledge to answer the following question. Give me a short answer.\n" + "\n\n".join(contexts) + "\n") if contexts else ""
+                sample_input = prefix + sample
+                if not first_input_printed and k == 0:
+                    print(f"First sample input (model {llm_name}):\n{sample_input}")
+                    first_input_printed = True
                 # New: Handle o3-mini model (proprietary models can't be called asynchronously, use synchronous call wrapper)
                 if llm_name == 'o3-mini':
                     resp = await async_client.chat.completions.create(
                         model=llm_name,
                         messages=[
                             {"role": "system", "content": sys_prompt},
-                            {"role": "user", "content": sample}
+                            {"role": "user", "content": sample_input}
                         ]
                     )
                     analysis = resp.choices[0].message.content
@@ -102,10 +191,7 @@ async def process_async_model(llm_name):
                     # Configure Gemini model
                     gemini_flash = genai.GenerativeModel(llm_name)
                     gemini_pro = genai.GenerativeModel(llm_name)
-                    if use_hint and hints is not None:
-                        prompt = sys_prompt + '\n' + "Based on the following knowledge to answer the following question. Give me a short answer.\n" + hints[k] + "\n" + sample
-                    else:
-                        prompt = sys_prompt + '\n' + sample
+                    prompt = sys_prompt + '\n' + sample_input
                     if 'flash' in llm_name:
                         result = await gemini_flash.generate_content_async(
                             prompt,
@@ -129,27 +215,19 @@ async def process_async_model(llm_name):
                     analysis = result.text
                 elif 'claude' in llm_name:
                     # Claude API call
-                    if use_hint and hints is not None:
-                        resp = await anthropic_client.messages.create(
-                            model=model_path_dicts[llm_name],
-                            max_tokens=512,
-                            system=sys_prompt,
-                            messages=[{"role": "user", "content": "Based on the following knowledge to answer the following question. Give me a short answer.\n" + hints[k] + "\n" + sample}]
-                        )
-                    else:
-                        resp = await anthropic_client.messages.create(
-                            model=model_path_dicts[llm_name],
-                            max_tokens=512,
-                            system=sys_prompt,
-                            messages=[{"role": "user", "content": sample}]
-                        )
+                    resp = await anthropic_client.messages.create(
+                        model=model_path_dicts[llm_name],
+                        max_tokens=512,
+                        system=sys_prompt,
+                        messages=[{"role": "user", "content": sample_input}]
+                    )
                     analysis = resp.content[0].text
                 elif 'gpt' in llm_name:
                     resp = await async_client.chat.completions.create(
                         model=llm_name,
                         messages=[
                             {"role": "system", "content": sys_prompt},
-                            {"role": "user", "content": sample}
+                            {"role": "user", "content": sample_input}
                         ],
                         max_tokens=512,
                         temperature=0
@@ -160,7 +238,7 @@ async def process_async_model(llm_name):
                         model=model_path_dicts[llm_name],
                         messages=[
                             {"role": "system", "content": sys_prompt},
-                            {"role": "user", "content": sample}
+                            {"role": "user", "content": sample_input}
                         ],
                         temperature=0
                     )
@@ -209,9 +287,9 @@ async def process_async_model(llm_name):
     print(f"{llm_name} final accuracy: {record}", file=log_f)
     # Save result files, distinguish whether hint is used
     if use_hint:
-        json.dump(dataset_copy, open(f'../../Logs/{llm_name}/{dataset_name}_{MODE}_0_hint_result.json', 'w'), indent=4)
+        json.dump(dataset_copy, open(f'../../Logs/{llm_name}/{dataset_name}_{MODE}_0{rag_suffix}_hint_result.json', 'w'), indent=4)
     else:
-        json.dump(dataset_copy, open(f'../../Logs/{llm_name}/{dataset_name}_{MODE}_0_result.json', 'w'), indent=4)
+        json.dump(dataset_copy, open(f'../../Logs/{llm_name}/{dataset_name}_{MODE}_0{rag_suffix}_result.json', 'w'), indent=4)
     log_f.close()
     return record
 
@@ -219,9 +297,11 @@ async def process_async_model(llm_name):
 async def process_local_model(llm_name):
     print(f"Processing local model: {llm_name}")
     os.makedirs(f'../../Logs/{llm_name}', exist_ok=True)
-    log_path = f'../../Logs/{llm_name}/result.txt'
+    rag_suffix = "_RAG" if USE_RAG else ""
+    log_path = f'../../Logs/{llm_name}/result{rag_suffix}.txt'
     log_f = open(log_path, 'a')
     print(llm_name, file=log_f, flush=True)
+    print(f"USE_RAG: {USE_RAG}", file=log_f, flush=True)
 
     mode = MODE
     if mode == 'CoT':
@@ -254,7 +334,23 @@ async def process_local_model(llm_name):
     dataset_copy = [{key: sample[key] for key in sample if key in ['Question', 'Correct Answer', 'Category', 'Topic', 'Level']} for sample in dataset_copy]
     answers = []
     success = 0
-    analyses = llm_generate_QA_answer(QA_prompts, conv_template, target_llm, tokenizer, batch_size=64, random_sample=True)
+    # Inject independent enhancements (RAG and/or Hints) into prompts if enabled
+    enriched_prompts = []
+    for i, base in enumerate(QA_prompts):
+        contexts = []
+        rag_ctx = _get_ctx_for(i, base) if USE_RAG else ""
+        if rag_ctx:
+            contexts.append("Retrieved Knowledge:\n" + rag_ctx)
+        if use_hint and hints is not None and len(hints) > i and hints[i]:
+            contexts.append("Provided Hint:\n" + hints[i])
+        prefix = ("Based on the following knowledge to answer the following question. Give me a short answer.\n" + "\n\n".join(contexts) + "\n") if contexts else ""
+        enriched_prompts.append(prefix + base)
+    QA_prompts = enriched_prompts
+    # print first enriched input once
+    if len(QA_prompts) > 0:
+        print(f"First sample input (local model {llm_name}):\n{QA_prompts[0]}")
+    analyses = llm_generate_QA_answer(QA_prompts, conv_template, target_llm, tokenizer, batch_size=8, random_sample=True)
+    
 
     # Add asynchronous answer extraction section
     async def extract_answers_batch(analyses_batch):
@@ -286,9 +382,9 @@ async def process_local_model(llm_name):
     print(f"Use hint: {use_hint}, mode: {mode}, n_shots:{n_shots}", file=log_f)
     print(f"{llm_name} final accuracy: {record}", file=log_f)
     if use_hint:
-        json.dump(dataset_copy, open(f'../../Logs/{llm_name}/{dataset_name}_{MODE}_{n_shots}_hint_result.json', 'w'), indent=4)
+        json.dump(dataset_copy, open(f'../../Logs/{llm_name}/{dataset_name}_{MODE}_{n_shots}{rag_suffix}_hint_result.json', 'w'), indent=4)
     else:
-        json.dump(dataset_copy, open(f'../../Logs/{llm_name}/{dataset_name}_{MODE}_{n_shots}_result.json', 'w'), indent=4)
+        json.dump(dataset_copy, open(f'../../Logs/{llm_name}/{dataset_name}_{MODE}_{n_shots}{rag_suffix}_result.json', 'w'), indent=4)
     log_f.close()
     return record
 
@@ -307,13 +403,19 @@ if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser(description="Unified test for LLM models")
-    parser.add_argument("--models", type=str, default="o3-mini",
+    parser.add_argument("--models", type=str, default='vicuna,vicuna-13b,llama3-instruct',
                         help="Comma-separated list of model names to test")
-    parser.add_argument("--mode", type=str, default="CoT", choices=["CoT", "DA"],
+    parser.add_argument("--mode", type=str, default="DA", choices=["CoT", "DA"],
                         help="Mode: Direct Answer (DA) or Chain of Thought (CoT)")
-    parser.add_argument("--use_hint", action="store_true", help="Use hint if flagged (default: False)")
+    parser.add_argument("--use_hint", action="store_true", help="Use handcrafted/static hints (default False)")
     parser.add_argument("--n_shots", type=int, default=0, help="Few-shot learning shots (default: 0)")
     parser.add_argument("--sampled", action="store_true", help="Use sampled dataset if flagged (default: False)")
+    # RAG arguments
+    parser.add_argument("--use_rag", action="store_true", help="Enable RAG enhancement (default False)")
+    parser.add_argument("--rag_persist_dir", type=str, default='../../storage/safety_index', help="RAG index persistence directory (use with --use_rag)")
+    parser.add_argument("--rag_top_k", type=int, default=2, help="Number of similar documents returned by RAG")
+    parser.add_argument("--rag_hf_model", type=str, default="BAAI/bge-m3", help="HF embedding model used by RAG")
+    parser.add_argument("--rag_context_path", type=str, default="../../data/rag_contexts_text_qa.json", help="Precomputed RAG context JSON (list or {by_index|by_text})")
     args = parser.parse_args()
 
     # ------------------------- Configuration Section -------------------------
@@ -346,17 +448,27 @@ if __name__ == '__main__':
     n_shots = args.n_shots
     target_models_arg = [x.strip() for x in args.models.split(",")]
 
-    # If hint is needed, pre-generate or load hints
+    # Initialize optional RAG retriever (independent from --use_hint)
+    USE_RAG = args.use_rag
+    if args.rag_context_path:
+        _load_rag_contexts(args.rag_context_path)
+    if USE_RAG and args.rag_persist_dir and RAG_CONTEXTS_BY_INDEX is None and RAG_CONTEXTS_BY_TEXT is None:
+        RAG_TOP_K = args.rag_top_k
+        RAG_RETRIEVER = _load_rag_retriever(args.rag_persist_dir, args.rag_hf_model, RAG_TOP_K)
+
+    # Initialize hints only if explicitly requested
     if use_hint:
+        # Keep original hints generation/caching logic
         hints_path = '../../data/hints.pkl'
         if os.path.exists(hints_path):
             hints = pickle.load(open(hints_path, 'rb'))
         else:
             hints = []
-            gpt_hint = OpenAIModel('gpt-4o', system_prompt="", temperature=1.0)
+            gpt_hint = OpenAIModel('gpt-4o', system_prompt=Hint_Generation_SYS_Prompt, temperature=1.0)
             for topic in topics:
                 hint = gpt_hint.prompt(topic)
                 hints.append(hint)
+            os.makedirs(os.path.dirname(hints_path), exist_ok=True)
             pickle.dump(hints, open(hints_path, 'wb'))
     else:
         hints = None
