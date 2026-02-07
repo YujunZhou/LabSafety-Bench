@@ -435,13 +435,12 @@ For detailed analysis of results, you can directly use the following evaluation 
 
 If you use LabSafety Bench in your research, please cite our work:
 ```
-@misc{zhou2024labsafetybenchbenchmarkingllms,
-      title={LabSafety Bench: Benchmarking LLMs on Safety Issues in Scientific Labs},
-      author={Yujun Zhou and Jingdong Yang and Kehan Guo and Pin-Yu Chen and Tian Gao and Werner Geyer and Nuno Moniz and Nitesh V Chawla and Xiangliang Zhang},
-      year={2024},
-      eprint={2410.14182},
-      archivePrefix={arXiv},
-      primaryClass={cs.CL},
-      url={https://arxiv.org/abs/2410.14182},
+@article{zhou2026benchmarking,
+  title={Benchmarking large language models on safety risks in scientific laboratories},
+  author={Zhou, Yujun and Yang, Jingdong and Huang, Yue and Guo, Kehan and Emory, Zoe and Ghosh, Bikram and Bedar, Amita and Shekar, Sujay and Liang, Zhenwen and Chen, Pin-Yu and others},
+  journal={Nature Machine Intelligence},
+  pages={1--12},
+  year={2026},
+  publisher={Nature Publishing Group UK London}
 }
 ```
